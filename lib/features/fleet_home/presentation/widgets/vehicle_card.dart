@@ -34,7 +34,7 @@ class VehicleCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(16.0),
         side: BorderSide(
           color: vehicle.hasActiveAlert
-              ? Colors.redAccent.withOpacity(0.6)
+              ? Colors.redAccent.withValues(alpha: 0.6)
               : const Color(0xFF334155),
           width: vehicle.hasActiveAlert ? 1.5 : 1.0,
         ),
@@ -50,65 +50,76 @@ class VehicleCard extends StatelessWidget {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(8.0),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF0F172A),
-                          borderRadius: BorderRadius.circular(10.0),
-                        ),
-                        child: const Icon(
-                          Icons.local_shipping,
-                          color: Color(0xFF38BDF8),
-                          size: 22.0,
-                        ),
-                      ),
-                      const SizedBox(width: 12.0),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            vehicle.regNumber,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 16.0,
-                              fontWeight: FontWeight.bold,
-                              letterSpacing: 0.5,
-                            ),
+                  Expanded(
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(8.0),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF0F172A),
+                            borderRadius: BorderRadius.circular(10.0),
                           ),
-                          const SizedBox(height: 2.0),
-                          Text(
-                            vehicle.model,
-                            style: const TextStyle(
-                              color: Color(0xFF94A3B8),
-                              fontSize: 13.0,
-                            ),
+                          child: const Icon(
+                            Icons.local_shipping,
+                            color: Color(0xFF38BDF8),
+                            size: 22.0,
                           ),
-                        ],
-                      ),
-                    ],
+                        ),
+                        const SizedBox(width: 10.0),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                vehicle.regNumber,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 15.0,
+                                  fontWeight: FontWeight.bold,
+                                  letterSpacing: 0.5,
+                                ),
+                              ),
+                              const SizedBox(height: 2.0),
+                              Text(
+                                vehicle.model,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Color(0xFF94A3B8),
+                                  fontSize: 12.0,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
+                  const SizedBox(width: 8.0),
                   Row(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
                       if (vehicle.hasActiveAlert)
                         Container(
-                          margin: const EdgeInsets.only(right: 8.0),
-                          padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
+                          margin: const EdgeInsets.only(right: 6.0),
+                          padding: const EdgeInsets.symmetric(horizontal: 6.0, vertical: 3.0),
                           decoration: BoxDecoration(
-                            color: Colors.redAccent.withOpacity(0.2),
-                            borderRadius: BorderRadius.circular(12.0),
+                            color: Colors.redAccent.withValues(alpha: 0.2),
+                            borderRadius: BorderRadius.circular(10.0),
                             border: Border.all(color: Colors.redAccent, width: 1.0),
                           ),
                           child: const Row(
+                            mainAxisSize: MainAxisSize.min,
                             children: [
-                              Icon(Icons.warning_amber_rounded, size: 14.0, color: Colors.redAccent),
-                              SizedBox(width: 4.0),
+                              Icon(Icons.warning_amber_rounded, size: 12.0, color: Colors.redAccent),
+                              SizedBox(width: 3.0),
                               Text(
                                 'ALERT',
                                 style: TextStyle(
                                   color: Colors.redAccent,
-                                  fontSize: 11.0,
+                                  fontSize: 10.0,
                                   fontWeight: FontWeight.bold,
                                 ),
                               ),
