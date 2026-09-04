@@ -1,0 +1,267 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../core/providers/fleet_providers.dart';
+import '../data/scale_generator.dart';
+
+class BenchmarkScreen extends ConsumerStatefulWidget {
+  const BenchmarkScreen({super.key});
+
+  @override
+  ConsumerState<BenchmarkScreen> createState() => _BenchmarkScreenState();
+}
+
+class _BenchmarkScreenState extends ConsumerState<BenchmarkScreen> {
+  bool _isRunning = false;
+  double _progress = 0.0;
+  String _statusMessage = 'Ready to execute 2M+ telemetry scale benchmark';
+  BenchmarkReport? _report;
+  int? _prunedRows;
+
+  Future<void> _runBenchmark() async {
+    setState(() {
+      _isRunning = true;
+      _progress = 0.0;
+      _statusMessage = 'Starting scale generator...';
+      _report = null;
+      _prunedRows = null;
+    });
+
+    try {
+      final dbService = ref.read(duckDBServiceProvider);
+      final generator = ScaleGenerator(dbService);
+
+      final report = await generator.runScaleBackfillAndBenchmark(
+        onProgress: (p, msg) {
+          if (mounted) {
+            setState(() {
+              _progress = p;
+              _statusMessage = msg;
+            });
+          }
+        },
+      );
+
+      ref.invalidate(vehicleListProvider);
+      ref.invalidate(fleetStatusCountsProvider);
+
+      if (mounted) {
+        setState(() {
+          _isRunning = false;
+          _report = report;
+          _statusMessage = 'Scale benchmark completed successfully!';
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isRunning = false;
+          _statusMessage = 'Benchmark error: $e';
+        });
+      }
+    }
+  }
+
+  Future<void> _runLogCompaction() async {
+    final dbService = ref.read(duckDBServiceProvider);
+    final generator = ScaleGenerator(dbService);
+
+    final pruned = await generator.runLogCompaction(retentionDays: 7);
+    ref.invalidate(vehicleListProvider);
+    ref.invalidate(fleetStatusCountsProvider);
+
+    if (mounted) {
+      setState(() {
+        _prunedRows = pruned;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Log compaction completed. Pruned $pruned raw signal rows older than 7 days.'),
+          backgroundColor: const Color(0xFF10B981),
+        ),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0F172A),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF1E293B),
+        elevation: 0,
+        title: const Text('Scale Benchmark & Log Retention'),
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(20.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Exercise Description Card
+            Container(
+              padding: const EdgeInsets.all(16.0),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1E293B),
+                borderRadius: BorderRadius.circular(16.0),
+                border: Border.all(color: const Color(0xFF334155)),
+              ),
+              child: const Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.speed, color: Color(0xFFF59E0B)),
+                      SizedBox(width: 8.0),
+                      Text(
+                        'Scale Exercise (Section 4)',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 16.0,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                  SizedBox(height: 8.0),
+                  Text(
+                    'Generates 500 electric vehicles and 2,000,000+ signal telemetry rows in DuckDB. Measures cold start time, warm p50/p95 SQL query latency, and memory footprint at rest.',
+                    style: TextStyle(color: Color(0xFF94A3B8), fontSize: 13.0, height: 1.4),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 20.0),
+
+            // Progress & Trigger Button
+            SizedBox(
+              width: double.infinity,
+              height: 50.0,
+              child: ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _isRunning ? const Color(0xFF334155) : const Color(0xFFF59E0B),
+                  foregroundColor: const Color(0xFF0F172A),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.0)),
+                ),
+                onPressed: _isRunning ? null : _runBenchmark,
+                icon: const Icon(Icons.rocket_launch, fontWeight: FontWeight.bold),
+                label: Text(
+                  _isRunning ? 'Backfilling 2M Telemetry Rows...' : 'Run 2 Million Telemetry Benchmark',
+                  style: const TextStyle(fontSize: 15.0, fontWeight: FontWeight.bold),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12.0),
+
+            if (_isRunning) ...[
+              LinearProgressIndicator(
+                value: _progress,
+                backgroundColor: const Color(0xFF1E293B),
+                valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFFF59E0B)),
+                minHeight: 8.0,
+              ),
+              const SizedBox(height: 8.0),
+            ],
+            Text(
+              _statusMessage,
+              style: const TextStyle(color: Color(0xFFCBD5E1), fontSize: 13.0),
+            ),
+            const SizedBox(height: 24.0),
+
+            // Benchmark Report Card
+            if (_report != null) ...[
+              const Text(
+                'Benchmark Metrics Report',
+                style: TextStyle(color: Colors.white, fontSize: 18.0, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 12.0),
+              Container(
+                padding: const EdgeInsets.all(16.0),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1E293B),
+                  borderRadius: BorderRadius.circular(16.0),
+                  border: Border.all(color: const Color(0xFF10B981)),
+                ),
+                child: Column(
+                  children: [
+                    _buildMetricRow('Vehicles Backfilled', '${_report!.vehicleCount}'),
+                    const Divider(color: Color(0xFF334155)),
+                    _buildMetricRow('Total Signal Rows', '${_report!.totalSignalRows.toString().replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (m) => '${m[1]},')}'),
+                    const Divider(color: Color(0xFF334155)),
+                    _buildMetricRow('Backfill Execution Time', '${_report!.backfillDurationSeconds.toStringAsFixed(2)} seconds'),
+                    const Divider(color: Color(0xFF334155)),
+                    _buildMetricRow('Fleet List Query p50 Latency', '${_report!.p50QueryLatencyMs.toStringAsFixed(2)} ms'),
+                    const Divider(color: Color(0xFF334155)),
+                    _buildMetricRow('Fleet List Query p95 Latency', '${_report!.p95QueryLatencyMs.toStringAsFixed(2)} ms'),
+                    const Divider(color: Color(0xFF334155)),
+                    _buildMetricRow('Memory Footprint at Rest (RSS)', '${_report!.memoryUsageMb.toStringAsFixed(1)} MB'),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 24.0),
+            ],
+
+            // Retention Policy & Log Compaction Section
+            Container(
+              padding: const EdgeInsets.all(16.0),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1E293B),
+                borderRadius: BorderRadius.circular(16.0),
+                border: Border.all(color: const Color(0xFF38BDF8)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Row(
+                    children: [
+                      Icon(Icons.cleaning_services, color: Color(0xFF38BDF8)),
+                      SizedBox(width: 8.0),
+                      Text(
+                        'Log Compaction & Retention Policy',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 16.0,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8.0),
+                  const Text(
+                    'Append-only telemetry logs grow continuously. Our policy prunes raw high-frequency signal rows older than 7 days while preserving geofence events, trip boundaries, and alert histories intact.',
+                    style: TextStyle(color: Color(0xFF94A3B8), fontSize: 13.0, height: 1.4),
+                  ),
+                  const SizedBox(height: 14.0),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: const Color(0xFF38BDF8),
+                        side: const BorderSide(color: Color(0xFF38BDF8)),
+                        padding: const EdgeInsets.symmetric(vertical: 12.0),
+                      ),
+                      onPressed: _isRunning ? null : _runLogCompaction,
+                      icon: const Icon(Icons.auto_delete_outlined),
+                      label: const Text('Execute Log Compaction (Keep 7-Day Log)', style: TextStyle(fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMetricRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6.0),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 14.0)),
+          Text(value, style: const TextStyle(color: Colors.white, fontSize: 15.0, fontWeight: FontWeight.bold)),
+        ],
+      ),
+    );
+  }
+}
