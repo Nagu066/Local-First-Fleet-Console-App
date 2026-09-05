@@ -71,16 +71,31 @@ class _VehicleDetailScreenState extends ConsumerState<VehicleDetailScreen> {
 
       final spots = <FlSpot>[];
       final labels = <String>[];
+      final parsedDates = <DateTime>[];
+
       for (int i = 0; i < rows.length; i++) {
         final tsRaw = rows[i][0].toString();
         final val = (rows[i][1] as num).toDouble().clamp(0.0, 100.0);
         spots.add(FlSpot(i.toDouble(), val));
 
         try {
-          final dt = DateTime.parse(tsRaw).toLocal();
-          labels.add('${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}');
+          parsedDates.add(DateTime.parse(tsRaw).toLocal());
         } catch (_) {
-          labels.add('');
+          parsedDates.add(DateTime.now());
+        }
+      }
+
+      final isMultiDay = parsedDates.isNotEmpty &&
+          parsedDates.last.difference(parsedDates.first).inHours > 24;
+
+      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+      for (final dt in parsedDates) {
+        if (isMultiDay) {
+          final mStr = months[dt.month - 1];
+          labels.add('${dt.day} $mStr');
+        } else {
+          labels.add('${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}');
         }
       }
 
@@ -461,21 +476,27 @@ class _VehicleDetailScreenState extends ConsumerState<VehicleDetailScreen> {
                                   bottomTitles: AxisTitles(
                                     sideTitles: SideTitles(
                                       showTitles: true,
-                                      reservedSize: 24,
-                                      interval: (_socHistorySpots.length / 4).clamp(1.0, 50.0),
+                                      reservedSize: 26,
+                                      interval: (_socHistorySpots.length > 4)
+                                          ? ((_socHistorySpots.length - 1) / 4.0)
+                                          : 1.0,
                                       getTitlesWidget: (val, meta) {
-                                        final idx = val.toInt();
-                                        final divider = (_socHistorySpots.length / 4).ceil().clamp(1, 50);
-                                        if (idx >= 0 && idx < _socTimeLabels.length && (idx % divider == 0)) {
-                                          return Padding(
-                                            padding: const EdgeInsets.only(top: 6.0),
-                                            child: Text(
-                                              _socTimeLabels[idx],
-                                              style: const TextStyle(color: Color(0xFF64748B), fontSize: 10),
-                                            ),
-                                          );
+                                        final idx = val.round();
+                                        if (idx < 0 || idx >= _socTimeLabels.length) {
+                                          return const SizedBox.shrink();
                                         }
-                                        return const SizedBox.shrink();
+                                        return SideTitleWidget(
+                                          meta: meta,
+                                          space: 6.0,
+                                          child: Text(
+                                            _socTimeLabels[idx],
+                                            style: const TextStyle(
+                                              color: Color(0xFF64748B),
+                                              fontSize: 10,
+                                              fontWeight: FontWeight.w500,
+                                            ),
+                                          ),
+                                        );
                                       },
                                     ),
                                   ),
