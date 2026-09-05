@@ -2,6 +2,7 @@ import 'package:uuid/uuid.dart';
 import '../database/duckdb_service.dart';
 import '../models/geofence.dart';
 import '../utils/distance_calculator.dart';
+import 'trip_engine.dart';
 
 /// Geofence Engine implementing Section 3.D requirements:
 /// - Create, edit, and deactivate persisted circular geofences (name, centre, radius, active state)
@@ -16,6 +17,7 @@ import '../utils/distance_calculator.dart';
 class GeofenceEngine {
   final DuckDBService dbService;
   final Uuid uuid = const Uuid();
+  TripEngine? tripEngine;
 
   /// Spatial hysteresis margin in meters to prevent perimeter boundary chatter
   static const double hysteresisMeters = 15.0;
@@ -29,7 +31,7 @@ class GeofenceEngine {
   // In-memory cache for fast deduplication & kinematic outlier detection
   final Map<String, _LastKnownLocation> _lastLocations = {};
 
-  GeofenceEngine(this.dbService);
+  GeofenceEngine(this.dbService, {this.tripEngine});
 
   /// Seed default circular geofences if none exist in DuckDB (retains deactivated ones).
   Future<void> seedDefaultGeofences() async {
@@ -303,6 +305,11 @@ class GeofenceEngine {
       lng: lng,
       timestamp: timestamp,
     );
+
+    // Automatically feed generated ENTRY/EXIT events into TripEngine
+    if (newEvents.isNotEmpty && tripEngine != null) {
+      await tripEngine!.processGeofenceEvents(vehicleId: vehicleId, events: newEvents);
+    }
 
     return newEvents;
   }

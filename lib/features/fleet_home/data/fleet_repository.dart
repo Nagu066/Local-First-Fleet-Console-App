@@ -31,8 +31,8 @@ class FleetRepository {
 
   FleetRepository(this.dbService) {
     alertEngine = AlertEngine(dbService);
-    geofenceEngine = GeofenceEngine(dbService);
     tripEngine = TripEngine(dbService);
+    geofenceEngine = GeofenceEngine(dbService, tripEngine: tripEngine);
   }
 
   /// Fetches list of vehicles directly from DuckDB view `v_latest_vehicle_status`
@@ -147,6 +147,9 @@ class FleetRepository {
     if (eventCount == 0) {
       await assignVehiclesToGeofences();
     }
+
+    // 3. Ensure realistic automatic trips are seeded if trips table is empty
+    await tripEngine.seedDefaultTripsIfEmpty();
   }
 
   /// Assigns vehicles to Depot Alpha, Charging Hub East, Logistics Terminal South, and in-transit
