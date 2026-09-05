@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../database/duckdb_service.dart';
 import '../../features/fleet_home/data/fleet_repository.dart';
+import '../../features/benchmark/data/scale_generator.dart';
 import '../models/vehicle.dart';
 import '../models/geofence.dart';
 import '../models/alert.dart';
@@ -51,3 +52,8 @@ final activeAlertsProvider = FutureProvider.family<List<Alert>, String?>((ref, v
   final repo = ref.watch(fleetRepositoryProvider);
   return await repo.alertEngine.fetchActiveAlerts(vehicleId: vehicleId);
 });
+
+final benchmarkProgressProvider = StateProvider<double>((ref) => 0.0);
+final benchmarkStatusProvider = StateProvider<String>((ref) => 'Ready to execute 2M+ telemetry scale benchmark');
+final benchmarkReportProvider = StateProvider<BenchmarkReport?>((ref) => null);
+final isBenchmarkRunningProvider = StateProvider<bool>((ref) => false);

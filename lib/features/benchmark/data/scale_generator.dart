@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math';
-import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 import '../../../core/database/duckdb_service.dart';
 
@@ -27,6 +26,9 @@ class ScaleGenerator {
   final DuckDBService dbService;
   final Uuid uuid = const Uuid();
 
+  /// Concurrency lock to prevent multiple benchmark backfills from running simultaneously
+  static bool isRunning = false;
+
   ScaleGenerator(this.dbService);
 
   /// Backfills 500 vehicles and 2,000,000+ signal rows into DuckDB in high-speed batches.
@@ -34,106 +36,116 @@ class ScaleGenerator {
   Future<BenchmarkReport> runScaleBackfillAndBenchmark({
     void Function(double progress, String status)? onProgress,
   }) async {
-    onProgress?.call(0.01, 'Clearing existing test data...');
-    await dbService.clearAllData();
-
-    final stopwatch = Stopwatch()..start();
-    const targetVehicles = 500;
-    const rowsPerVehicle = 4000; // 500 * 4000 = 2,000,000 signal rows
-    const totalSignalsTarget = targetVehicles * rowsPerVehicle;
-
-    onProgress?.call(0.05, 'Inserting 500 vehicles...');
-    final now = DateTime.now();
-
-    // 1. Insert 500 vehicles in a single batch statement
-    final vehicleSql = StringBuffer('INSERT INTO vehicles (id, reg_number, model, created_at) VALUES ');
-    for (int i = 1; i <= targetVehicles; i++) {
-      final vId = 'veh_$i';
-      final reg = 'KA-${(i % 50 + 10).toString().padLeft(2, '0')}-E-${(1000 + i)}';
-      final model = 'EV Truck Series ${(i % 5) + 1}';
-      final createdIso = now.subtract(Duration(days: 60)).toIso8601String();
-      vehicleSql.write("('$vId', '$reg', '$model', '$createdIso')${i == targetVehicles ? ';' : ','}");
+    if (isRunning) {
+      throw StateError('A scale benchmark is already in progress.');
     }
-    await dbService.execute(vehicleSql.toString());
+    isRunning = true;
 
-    onProgress?.call(0.10, 'Generating 2,000,000 signal rows in optimized SQL batches...');
+    try {
+      onProgress?.call(0.01, 'Clearing existing test data...');
+      await dbService.clearAllData();
 
-    // 2. High-speed multi-row batch inserts for 2 million signal rows
-    const batchSize = 25000; // Insert 25,000 rows per SQL statement
-    int insertedRows = 0;
-    final random = Random(12345);
+      final stopwatch = Stopwatch()..start();
+      const targetVehicles = 500;
+      const rowsPerVehicle = 4000; // 500 * 4000 = 2,000,000 signal rows
+      const totalSignalsTarget = targetVehicles * rowsPerVehicle;
 
-    final signalNames = ['soc', 'range', 'speed', 'battery_temp', 'odometer', 'ignition', 'latitude', 'longitude'];
+      onProgress?.call(0.05, 'Inserting 500 vehicles...');
+      final now = DateTime.now();
+      final runEpoch = now.millisecondsSinceEpoch;
 
-    while (insertedRows < totalSignalsTarget) {
-      final batchSql = StringBuffer(
-        'INSERT INTO telemetry_signals (id, vehicle_id, signal_name, value, unit, timestamp, ingested_at) VALUES '
-      );
+      // 1. Insert 500 vehicles in a single batch statement with conflict handling
+      final vehicleSql = StringBuffer('INSERT INTO vehicles (id, reg_number, model, created_at) VALUES ');
+      for (int i = 1; i <= targetVehicles; i++) {
+        final vId = 'veh_$i';
+        final reg = 'KA-${(i % 50 + 10).toString().padLeft(2, '0')}-E-${(1000 + i)}';
+        final model = 'EV Truck Series ${(i % 5) + 1}';
+        final createdIso = now.subtract(const Duration(days: 60)).toIso8601String();
+        vehicleSql.write("('$vId', '$reg', '$model', '$createdIso')${i == targetVehicles ? ' ON CONFLICT (id) DO NOTHING;' : ','}");
+      }
+      await dbService.execute(vehicleSql.toString());
 
-      final countInThisBatch = min(batchSize, totalSignalsTarget - insertedRows);
-      for (int b = 0; b < countInThisBatch; b++) {
-        final globalIndex = insertedRows + b;
-        final vehicleNum = (globalIndex % targetVehicles) + 1;
-        final vId = 'veh_$vehicleNum';
+      onProgress?.call(0.10, 'Generating 2,000,000 signal rows in optimized SQL batches...');
 
-        final sigName = signalNames[globalIndex % signalNames.length];
-        final val = _generateSignalValue(sigName, random);
+      // 2. High-speed multi-row batch inserts for 2 million signal rows (10,000 per batch for low memory overhead)
+      const batchSize = 10000;
+      int insertedRows = 0;
+      final random = Random(12345);
 
-        // Spread timestamps over 30 days
-        final minutesAgo = (globalIndex / 50).floor();
-        final ts = now.subtract(Duration(minutes: minutesAgo));
-        final tsIso = ts.toIso8601String();
-        final sigId = 'sig_${globalIndex + 1}';
+      final signalNames = ['soc', 'range', 'speed', 'battery_temp', 'odometer', 'ignition', 'latitude', 'longitude'];
 
-        batchSql.write("('$sigId', '$vId', '$sigName', $val, NULL, '$tsIso', '$tsIso')${b == countInThisBatch - 1 ? ';' : ','}");
+      while (insertedRows < totalSignalsTarget) {
+        final batchSql = StringBuffer(
+          'INSERT INTO telemetry_signals (id, vehicle_id, signal_name, value, unit, timestamp, ingested_at) VALUES '
+        );
+
+        final countInThisBatch = min(batchSize, totalSignalsTarget - insertedRows);
+        for (int b = 0; b < countInThisBatch; b++) {
+          final globalIndex = insertedRows + b;
+          final vehicleNum = (globalIndex % targetVehicles) + 1;
+          final vId = 'veh_$vehicleNum';
+
+          final sigName = signalNames[globalIndex % signalNames.length];
+          final val = _generateSignalValue(sigName, random);
+
+          // Spread timestamps over 30 days
+          final minutesAgo = (globalIndex / 50).floor();
+          final ts = now.subtract(Duration(minutes: minutesAgo));
+          final tsIso = ts.toIso8601String();
+          final sigId = 's_${runEpoch}_$globalIndex';
+
+          batchSql.write("('$sigId', '$vId', '$sigName', $val, NULL, '$tsIso', '$tsIso')${b == countInThisBatch - 1 ? ' ON CONFLICT (id) DO NOTHING;' : ','}");
+        }
+
+        await dbService.execute(batchSql.toString());
+        insertedRows += countInThisBatch;
+
+        final progressRatio = 0.10 + (insertedRows / totalSignalsTarget) * 0.75;
+        onProgress?.call(
+          progressRatio,
+          'Inserted ${insertedRows.toString().replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]},')} / 2,000,000 signal rows...',
+        );
       }
 
-      await dbService.execute(batchSql.toString());
-      insertedRows += countInThisBatch;
+      stopwatch.stop();
+      final backfillSeconds = stopwatch.elapsedMilliseconds / 1000.0;
 
-      final progressRatio = 0.10 + (insertedRows / totalSignalsTarget) * 0.75;
-      onProgress?.call(
-        progressRatio,
-        'Inserted ${insertedRows.toString().replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]},')} / 2,000,000 signal rows...',
+      onProgress?.call(0.90, 'Running fleet query latency benchmarks (100 warm iterations)...');
+
+      // 3. Measure p50 and p95 query latency across 100 iterations
+      final latencies = <double>[];
+      for (int iter = 0; iter < 100; iter++) {
+        final qStopwatch = Stopwatch()..start();
+        final rs = await dbService.query('''
+          SELECT vehicle_id, reg_number, model, last_ping, soc, range_km, speed, battery_temp, odometer, ignition 
+          FROM v_latest_vehicle_status;
+        ''');
+        rs.fetchAll();
+        await rs.dispose();
+        qStopwatch.stop();
+        latencies.add(qStopwatch.elapsedMicroseconds / 1000.0); // ms
+      }
+
+      latencies.sort();
+      final p50 = latencies[50];
+      final p95 = latencies[95];
+
+      // 4. Memory measurement (Current RSS via ProcessInfo)
+      final memoryMb = ProcessInfo.currentRss / (1024 * 1024);
+
+      onProgress?.call(1.0, 'Scale benchmark complete!');
+
+      return BenchmarkReport(
+        vehicleCount: targetVehicles,
+        totalSignalRows: insertedRows,
+        backfillDurationSeconds: backfillSeconds,
+        p50QueryLatencyMs: p50,
+        p95QueryLatencyMs: p95,
+        memoryUsageMb: memoryMb.toDouble(),
       );
+    } finally {
+      isRunning = false;
     }
-
-    stopwatch.stop();
-    final backfillSeconds = stopwatch.elapsedMilliseconds / 1000.0;
-
-    onProgress?.call(0.90, 'Running fleet query latency benchmarks (100 warm iterations)...');
-
-    // 3. Measure p50 and p95 query latency across 100 iterations
-    final latencies = <double>[];
-    for (int iter = 0; iter < 100; iter++) {
-      final qStopwatch = Stopwatch()..start();
-      final rs = await dbService.query('''
-        SELECT vehicle_id, reg_number, model, last_ping, soc, range_km, speed, battery_temp, odometer, ignition 
-        FROM v_latest_vehicle_status;
-      ''');
-      rs.fetchAll();
-      await rs.dispose();
-      qStopwatch.stop();
-      latencies.add(qStopwatch.elapsedMicroseconds / 1000.0); // ms
-    }
-
-    latencies.sort();
-    final p50 = latencies[50];
-    final p95 = latencies[95];
-
-    // 4. Memory measurement (Current RSS via ProcessInfo if available)
-    final memoryMb = ProcessInfo.currentRss / (1024 * 1024);
-
-    onProgress?.call(1.0, 'Scale benchmark complete!');
-
-    return BenchmarkReport(
-      vehicleCount: targetVehicles,
-      totalSignalRows: insertedRows,
-      backfillDurationSeconds: backfillSeconds,
-      p50QueryLatencyMs: p50,
-      p95QueryLatencyMs: p95,
-      memoryUsageMb: memoryMb.toDouble(),
-    );
   }
 
   /// Implements Log Compaction & Retention Policy (Section 4)
