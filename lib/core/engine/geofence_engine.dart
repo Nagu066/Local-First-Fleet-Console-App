@@ -130,6 +130,7 @@ class GeofenceEngine {
     required double lat,
     required double lng,
     required DateTime timestamp,
+    bool isReEvaluation = false,
   }) async {
     // --- Edge Case 4: Inaccurate Readings (Coordinate Range & Null Island Check) ---
     if (lat < -90.0 || lat > 90.0 || lng < -180.0 || lng > 180.0 || (lat == 0.0 && lng == 0.0)) {
@@ -138,8 +139,9 @@ class GeofenceEngine {
 
     final lastKnown = _lastLocations[vehicleId];
 
-    // --- Edge Case 1: Duplicates ---
-    if (lastKnown != null &&
+    // --- Edge Case 1: Duplicates (only for raw telemetry packets, not boundary re-evaluations) ---
+    if (!isReEvaluation &&
+        lastKnown != null &&
         lastKnown.timestamp == timestamp &&
         (lastKnown.lat - lat).abs() < 0.00001 &&
         (lastKnown.lng - lng).abs() < 0.00001) {
@@ -185,30 +187,9 @@ class GeofenceEngine {
     }
 
     final newEvents = <GeofenceEvent>[];
-    final tsIso = timestamp.toIso8601String();
-    final nowIso = DateTime.now().toIso8601String();
-
-    // --- Edge Case 6: Missing Intervals (Tunnel / Disconnect Blackout) ---
-    if (lastKnown != null && currentGeofenceId != null) {
-      final blackoutSeconds = timestamp.difference(lastKnown.timestamp).inSeconds;
-      if (blackoutSeconds > blackoutIntervalSeconds) {
-        // Vehicle disappeared for > 10 mins and reappeared; close previous geofence cleanly
-        final exitTsIso = lastKnown.timestamp.add(const Duration(seconds: 1)).toIso8601String();
-        final exitId = uuid.v4();
-        await dbService.execute('''
-          INSERT INTO geofence_events (id, vehicle_id, geofence_id, event_type, timestamp, packet_timestamp)
-          VALUES ('$exitId', '$vehicleId', '$currentGeofenceId', 'EXIT', '$exitTsIso', '$nowIso');
-        ''');
-        newEvents.add(GeofenceEvent(
-          id: exitId,
-          vehicleId: vehicleId,
-          geofenceId: currentGeofenceId,
-          eventType: GeofenceEventType.exit,
-          timestamp: lastKnown.timestamp.add(const Duration(seconds: 1)),
-        ));
-        currentGeofenceId = null;
-      }
-    }
+    final tsUtc = timestamp.toUtc();
+    final tsIso = tsUtc.toIso8601String();
+    final nowIso = DateTime.now().toUtc().toIso8601String();
 
     // --- Edge Case 3 (GPS Jitter) & Edge Case 5 (Overlaps) ---
     // Evaluate containment with 15m spatial hysteresis and normalized distance tie-breaking
@@ -240,6 +221,28 @@ class GeofenceEngine {
             winningGeofence = gf;
           }
         }
+      }
+    }
+
+    // --- Edge Case 6: Missing Intervals (Tunnel / Disconnect Blackout) ---
+    // Synthesize an exit only if vehicle reappears outside former geofence after prolonged blackout (not on boundary re-evaluations)
+    if (!isReEvaluation && lastKnown != null && currentGeofenceId != null && winningGeofence?.id != currentGeofenceId) {
+      final blackoutSeconds = tsUtc.difference(lastKnown.timestamp.toUtc()).inSeconds;
+      if (blackoutSeconds > blackoutIntervalSeconds) {
+        final exitTsIso = lastKnown.timestamp.toUtc().add(const Duration(seconds: 1)).toIso8601String();
+        final exitId = uuid.v4();
+        await dbService.execute('''
+          INSERT INTO geofence_events (id, vehicle_id, geofence_id, event_type, timestamp, packet_timestamp)
+          VALUES ('$exitId', '$vehicleId', '$currentGeofenceId', 'EXIT', '$exitTsIso', '$nowIso');
+        ''');
+        newEvents.add(GeofenceEvent(
+          id: exitId,
+          vehicleId: vehicleId,
+          geofenceId: currentGeofenceId,
+          eventType: GeofenceEventType.exit,
+          timestamp: lastKnown.timestamp.toUtc().add(const Duration(seconds: 1)),
+        ));
+        currentGeofenceId = null;
       }
     }
 
@@ -313,19 +316,19 @@ class GeofenceEngine {
       WHERE latitude IS NOT NULL AND longitude IS NOT NULL;
     ''');
 
+    final now = DateTime.now();
+
     for (final row in vehicleRows) {
       final vId = row[0].toString();
       final lat = (row[1] as num).toDouble();
       final lng = (row[2] as num).toDouble();
-      final ts = (row[3] is DateTime)
-          ? row[3] as DateTime
-          : (row[3] is String ? DateTime.tryParse(row[3] as String) : null) ?? DateTime.now();
 
       await processLocation(
         vehicleId: vId,
         lat: lat,
         lng: lng,
-        timestamp: ts,
+        timestamp: now,
+        isReEvaluation: true,
       );
     }
   }
