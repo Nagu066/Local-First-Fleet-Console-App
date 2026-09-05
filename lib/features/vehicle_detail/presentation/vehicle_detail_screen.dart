@@ -136,7 +136,7 @@ class _VehicleDetailScreenState extends ConsumerState<VehicleDetailScreen> {
         ],
       ),
       body: vehicleAsync.when(
-        data: (vehicle) {
+        data: (Vehicle? vehicle) {
           if (vehicle == null) {
             return const Center(child: Text('Vehicle not found', style: TextStyle(color: Colors.white)));
           }
@@ -186,6 +186,25 @@ class _VehicleDetailScreenState extends ConsumerState<VehicleDetailScreen> {
                               color: Color(0xFF94A3B8),
                               fontSize: 14.0,
                             ),
+                          ),
+                          const SizedBox(height: 6.0),
+                          Row(
+                            children: [
+                              Icon(
+                                vehicle.currentGeofenceName != null ? Icons.fmd_good : Icons.navigation_outlined,
+                                size: 14.0,
+                                color: vehicle.currentGeofenceName != null ? const Color(0xFF38BDF8) : const Color(0xFF64748B),
+                              ),
+                              const SizedBox(width: 6.0),
+                              Text(
+                                'Geofence: ${vehicle.currentGeofenceName ?? 'In Transit'}',
+                                style: TextStyle(
+                                  color: vehicle.currentGeofenceName != null ? const Color(0xFF38BDF8) : const Color(0xFF94A3B8),
+                                  fontSize: 13.0,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
                           ),
                         ],
                       ),

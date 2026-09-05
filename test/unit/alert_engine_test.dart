@@ -96,6 +96,77 @@ void main() {
       expect(alerts, isEmpty, reason: 'Alert should automatically resolve when condition clears');
     });
 
+    test('Freshness rule: Stale reading (> 15 mins old) does NOT trigger alert', () async {
+      final staleTime = now.subtract(const Duration(minutes: 30));
+
+      await alertEngine.evaluateTelemetry(
+        vehicleId: 'v100',
+        soc: 8.0, // Critical condition, but stale!
+        batteryTemp: 52.0, // Overheating, but stale!
+        timestamp: staleTime,
+        currentClock: now,
+      );
+
+      final alerts = await alertEngine.fetchActiveAlerts(vehicleId: 'v100');
+      expect(alerts, isEmpty, reason: 'Stale readings (> 15 minutes) must not trigger any alerts');
+    });
+
+    test('Battery overheating (> 45 °C) triggers CRITICAL alert and resolves when cooled', () async {
+      // 1. Overheating trigger on fresh reading
+      await alertEngine.evaluateTelemetry(
+        vehicleId: 'v100',
+        soc: 80.0,
+        batteryTemp: 48.0,
+        timestamp: now,
+        currentClock: now,
+      );
+
+      var alerts = await alertEngine.fetchActiveAlerts(vehicleId: 'v100');
+      expect(alerts.length, equals(1));
+      expect(alerts.first.alertType, equals(AlertType.batteryOverheating));
+      expect(alerts.first.severity, equals(AlertSeverity.critical));
+
+      // 2. Battery cools down to 35°C -> resolves alert
+      await alertEngine.evaluateTelemetry(
+        vehicleId: 'v100',
+        soc: 80.0,
+        batteryTemp: 35.0,
+        timestamp: now.add(const Duration(minutes: 5)),
+        currentClock: now.add(const Duration(minutes: 5)),
+      );
+
+      alerts = await alertEngine.fetchActiveAlerts(vehicleId: 'v100');
+      expect(alerts, isEmpty, reason: 'Overheating alert should auto-resolve when battery cools <= 45°C');
+    });
+
+    test('De-escalates from CRITICAL_BATTERY to LOW_BATTERY if SOC increases to 15%', () async {
+      // Trigger critical alert (< 10%)
+      await alertEngine.evaluateTelemetry(
+        vehicleId: 'v100',
+        soc: 8.0,
+        batteryTemp: 30.0,
+        timestamp: now,
+        currentClock: now,
+      );
+
+      var alerts = await alertEngine.fetchActiveAlerts(vehicleId: 'v100');
+      expect(alerts.first.alertType, equals(AlertType.criticalBattery));
+
+      // Partial charge to 15% (10% <= SOC < 20%) -> de-escalates to LOW_BATTERY WARNING
+      await alertEngine.evaluateTelemetry(
+        vehicleId: 'v100',
+        soc: 15.0,
+        batteryTemp: 30.0,
+        timestamp: now.add(const Duration(minutes: 2)),
+        currentClock: now.add(const Duration(minutes: 2)),
+      );
+
+      alerts = await alertEngine.fetchActiveAlerts(vehicleId: 'v100');
+      expect(alerts.length, equals(1), reason: 'Remains single escalating alert');
+      expect(alerts.first.alertType, equals(AlertType.lowBattery));
+      expect(alerts.first.severity, equals(AlertSeverity.warning));
+    });
+
     test('Dismissal and Undo flow', () async {
       await alertEngine.evaluateTelemetry(
         vehicleId: 'v100',
@@ -107,7 +178,7 @@ void main() {
       var alerts = await alertEngine.fetchActiveAlerts(vehicleId: 'v100');
       final alertId = alerts.first.id;
 
-      // User dismisses alert with reason
+      // User dismisses alert with reason ("I am on it")
       await alertEngine.dismissAlert(alertId, 'I am on it');
 
       alerts = await alertEngine.fetchActiveAlerts(vehicleId: 'v100');

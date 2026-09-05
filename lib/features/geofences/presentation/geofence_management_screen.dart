@@ -95,24 +95,29 @@ class _GeofenceManagementScreenState extends ConsumerState<GeofenceManagementScr
 
               if (name.isEmpty) return;
 
-              final dbService = ref.read(duckDBServiceProvider);
-              final nowIso = DateTime.now().toIso8601String();
+              final repo = ref.read(fleetRepositoryProvider);
 
               if (existing == null) {
-                final id = uuid.v4();
-                await dbService.execute('''
-                  INSERT INTO geofences (id, name, center_lat, center_lng, radius_meters, is_active, created_at, updated_at)
-                  VALUES ('$id', '$name', $lat, $lng, $radius, true, '$nowIso', '$nowIso');
-                ''');
+                await repo.geofenceEngine.createGeofence(
+                  name: name,
+                  centerLat: lat,
+                  centerLng: lng,
+                  radiusMeters: radius,
+                  isActive: true,
+                );
               } else {
-                await dbService.execute('''
-                  UPDATE geofences 
-                  SET name = '$name', center_lat = $lat, center_lng = $lng, radius_meters = $radius, updated_at = '$nowIso' 
-                  WHERE id = '${existing.id}';
-                ''');
+                await repo.geofenceEngine.updateGeofence(
+                  id: existing.id,
+                  name: name,
+                  centerLat: lat,
+                  centerLng: lng,
+                  radiusMeters: radius,
+                  isActive: existing.isActive,
+                );
               }
 
               ref.invalidate(geofencesProvider);
+              ref.invalidate(vehicleListProvider);
               if (mounted) Navigator.pop(ctx);
             },
             child: Text(existing == null ? 'Create' : 'Save'),
@@ -123,17 +128,20 @@ class _GeofenceManagementScreenState extends ConsumerState<GeofenceManagementScr
   }
 
   Future<void> _toggleGeofenceActive(Geofence gf) async {
-    final dbService = ref.read(duckDBServiceProvider);
+    final repo = ref.read(fleetRepositoryProvider);
     final newActive = !gf.isActive;
-    final nowIso = DateTime.now().toIso8601String();
 
-    await dbService.execute('''
-      UPDATE geofences 
-      SET is_active = $newActive, updated_at = '$nowIso' 
-      WHERE id = '${gf.id}';
-    ''');
+    await repo.geofenceEngine.updateGeofence(
+      id: gf.id,
+      name: gf.name,
+      centerLat: gf.centerLat,
+      centerLng: gf.centerLng,
+      radiusMeters: gf.radiusMeters,
+      isActive: newActive,
+    );
 
     ref.invalidate(geofencesProvider);
+    ref.invalidate(vehicleListProvider);
   }
 
   @override
@@ -182,27 +190,43 @@ class _GeofenceManagementScreenState extends ConsumerState<GeofenceManagementScr
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Row(
-                          children: [
-                            Icon(
-                              Icons.bubble_chart,
-                              color: gf.isActive ? const Color(0xFF38BDF8) : const Color(0xFF64748B),
-                            ),
-                            const SizedBox(width: 8.0),
-                            Text(
-                              gf.name,
-                              style: TextStyle(
-                                color: gf.isActive ? Colors.white : const Color(0xFF94A3B8),
-                                fontSize: 16.0,
-                                fontWeight: FontWeight.bold,
+                        Expanded(
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.bubble_chart,
+                                color: gf.isActive ? const Color(0xFF38BDF8) : const Color(0xFF64748B),
                               ),
+                              const SizedBox(width: 8.0),
+                              Expanded(
+                                child: Text(
+                                  gf.name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: gf.isActive ? Colors.white : const Color(0xFF94A3B8),
+                                    fontSize: 16.0,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.edit_outlined, size: 20.0, color: Color(0xFF38BDF8)),
+                              tooltip: 'Edit Geofence',
+                              onPressed: () => _showAddEditGeofenceModal(existing: gf),
+                            ),
+                            Switch(
+                              value: gf.isActive,
+                              activeColor: const Color(0xFF38BDF8),
+                              onChanged: (_) => _toggleGeofenceActive(gf),
                             ),
                           ],
-                        ),
-                        Switch(
-                          value: gf.isActive,
-                          activeColor: const Color(0xFF38BDF8),
-                          onChanged: (_) => _toggleGeofenceActive(gf),
                         ),
                       ],
                     ),

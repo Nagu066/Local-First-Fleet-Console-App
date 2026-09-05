@@ -36,16 +36,28 @@ class FleetRepository {
   }
 
   /// Fetches list of vehicles directly from DuckDB view `v_latest_vehicle_status`
+  /// joins current geofence status from latest geofence event
   Future<List<Vehicle>> fetchFleetList({
     String? statusFilter, // 'ALL', 'MOVING', 'IDLE', 'STOPPED', 'OFFLINE'
     String? searchQuery,
   }) async {
     final rows = await dbService.queryRows('''
+      WITH latest_gf_events AS (
+        SELECT 
+          ge.vehicle_id, 
+          ge.geofence_id, 
+          ge.event_type,
+          ROW_NUMBER() OVER (PARTITION BY ge.vehicle_id ORDER BY ge.timestamp DESC, ge.id DESC) as rn
+        FROM geofence_events ge
+      )
       SELECT 
         v.vehicle_id, v.reg_number, v.model, v.last_ping, 
         v.soc, v.range_km, v.speed, v.battery_temp, v.odometer, v.ignition, v.latitude, v.longitude,
-        (SELECT COUNT(*) FROM alerts a WHERE a.vehicle_id = v.vehicle_id AND a.status = 'ACTIVE') as active_alerts
+        (SELECT COUNT(*) FROM alerts a WHERE a.vehicle_id = v.vehicle_id AND a.status = 'ACTIVE') as active_alerts,
+        CASE WHEN lge.event_type = 'ENTRY' THEN gf.name ELSE NULL END as current_geofence_name
       FROM v_latest_vehicle_status v
+      LEFT JOIN latest_gf_events lge ON v.vehicle_id = lge.vehicle_id AND lge.rn = 1
+      LEFT JOIN geofences gf ON lge.geofence_id = gf.id
       ORDER BY v.reg_number ASC;
     ''');
 
@@ -164,8 +176,27 @@ class FleetRepository {
       final temp = isOverheating ? 48.5 : (28.0 + random.nextDouble() * 12.0);
       final range = (soc * 2.2);
       final odo = 1200.0 + i * 150.0;
-      final lat = 12.9716 + (random.nextDouble() - 0.5) * 0.1;
-      final lng = 77.5946 + (random.nextDouble() - 0.5) * 0.1;
+
+      // Seed deterministic positions: some inside each geofence, some in transit
+      double lat;
+      double lng;
+      if (i <= 12) {
+        // Depot Alpha (center: 12.9716, 77.5946)
+        lat = 12.9716 + (random.nextDouble() - 0.5) * 0.002;
+        lng = 77.5946 + (random.nextDouble() - 0.5) * 0.002;
+      } else if (i <= 22) {
+        // Charging Hub East (center: 12.9250, 77.6800)
+        lat = 12.9250 + (random.nextDouble() - 0.5) * 0.002;
+        lng = 77.6800 + (random.nextDouble() - 0.5) * 0.002;
+      } else if (i <= 32) {
+        // Logistics Terminal South (center: 12.8500, 77.6500)
+        lat = 12.8500 + (random.nextDouble() - 0.5) * 0.002;
+        lng = 77.6500 + (random.nextDouble() - 0.5) * 0.002;
+      } else {
+        // In transit on highway / outside geofences
+        lat = 12.9500 + (random.nextDouble() - 0.5) * 0.08;
+        lng = 77.6200 + (random.nextDouble() - 0.5) * 0.08;
+      }
 
       final signals = {
         'soc': soc,
@@ -185,6 +216,14 @@ class FleetRepository {
           VALUES ('$sigId', '$vehicleId', '${entry.key}', ${entry.value}, NULL, '$pingIso', '$pingIso');
         ''');
       }
+
+      // Process geofence containment for vehicle
+      await geofenceEngine.processLocation(
+        vehicleId: vehicleId,
+        lat: lat,
+        lng: lng,
+        timestamp: pingTime,
+      );
 
       // Evaluate alerts for freshly ingested telemetry
       if (!isOffline) {

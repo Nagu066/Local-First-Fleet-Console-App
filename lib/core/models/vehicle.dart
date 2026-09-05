@@ -32,6 +32,7 @@ class Vehicle {
   final double? latitude;
   final double? longitude;
   final bool hasActiveAlert;
+  final String? currentGeofenceName;
 
   const Vehicle({
     required this.id,
@@ -47,6 +48,7 @@ class Vehicle {
     this.latitude,
     this.longitude,
     this.hasActiveAlert = false,
+    this.currentGeofenceName,
   });
 
   /// Computes vehicle status using "first match wins" rule:
@@ -74,7 +76,7 @@ class Vehicle {
     return VehicleStatus.stopped;
   }
 
-  factory Vehicle.fromRow(List<Object?> row, {bool hasActiveAlert = false}) {
+  factory Vehicle.fromRow(List<Object?> row, {bool hasActiveAlert = false, String? currentGeofenceName}) {
     DateTime? parseDateTime(Object? val) {
       if (val == null) return null;
       if (val is DateTime) return val;
@@ -98,6 +100,12 @@ class Vehicle {
       return null;
     }
 
+    String? parseGeofence(Object? val) {
+      if (val == null) return null;
+      final str = val.toString().trim();
+      return str.isEmpty ? null : str;
+    }
+
     return Vehicle(
       id: row[0].toString(),
       regNumber: row[1].toString(),
@@ -112,6 +120,7 @@ class Vehicle {
       latitude: parseDouble(row[10]),
       longitude: parseDouble(row[11]),
       hasActiveAlert: hasActiveAlert,
+      currentGeofenceName: currentGeofenceName ?? (row.length > 13 ? parseGeofence(row[13]) : null),
     );
   }
 }

@@ -91,6 +91,29 @@ class VehicleCard extends StatelessWidget {
                                   fontSize: 12.0,
                                 ),
                               ),
+                              const SizedBox(height: 3.0),
+                              Row(
+                                children: [
+                                  Icon(
+                                    vehicle.currentGeofenceName != null ? Icons.fmd_good : Icons.navigation_outlined,
+                                    size: 12.0,
+                                    color: vehicle.currentGeofenceName != null ? const Color(0xFF38BDF8) : const Color(0xFF64748B),
+                                  ),
+                                  const SizedBox(width: 4.0),
+                                  Expanded(
+                                    child: Text(
+                                      vehicle.currentGeofenceName != null ? vehicle.currentGeofenceName! : 'In Transit',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        color: vehicle.currentGeofenceName != null ? const Color(0xFF38BDF8) : const Color(0xFF94A3B8),
+                                        fontSize: 11.5,
+                                        fontWeight: vehicle.currentGeofenceName != null ? FontWeight.w600 : FontWeight.normal,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ],
                           ),
                         ),

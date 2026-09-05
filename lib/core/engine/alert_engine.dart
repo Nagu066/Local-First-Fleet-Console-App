@@ -9,14 +9,19 @@ class AlertEngine {
   AlertEngine(this.dbService);
 
   /// Evaluates telemetry values for a vehicle and updates active/resolved/escalated alerts in DuckDB.
+  /// Enforces Section 3.C requirement: "Thresholds, on fresh readings only" (within 15 minutes of current clock).
   Future<void> evaluateTelemetry({
     required String vehicleId,
     required double? soc,
     required double? batteryTemp,
     required DateTime timestamp,
+    DateTime? currentClock,
   }) async {
-    final now = DateTime.now();
-    final nowIso = now.toIso8601String();
+    final now = currentClock ?? DateTime.now();
+    final nowIso = DateTime.now().toIso8601String();
+
+    // Check reading freshness: fresh if event time is within 15 minutes of clock
+    final isFresh = now.difference(timestamp).inMinutes.abs() <= 15;
 
     // 1. Evaluate SOC Alert (Escalating: LOW_BATTERY < 20%, CRITICAL_BATTERY < 10%)
     if (soc != null) {
@@ -25,6 +30,7 @@ class AlertEngine {
         soc: soc,
         timestamp: timestamp,
         nowIso: nowIso,
+        isFresh: isFresh,
       );
     }
 
@@ -35,6 +41,7 @@ class AlertEngine {
         batteryTemp: batteryTemp,
         timestamp: timestamp,
         nowIso: nowIso,
+        isFresh: isFresh,
       );
     }
   }
@@ -44,6 +51,7 @@ class AlertEngine {
     required double soc,
     required DateTime timestamp,
     required String nowIso,
+    required bool isFresh,
   }) async {
     // Check for existing active or dismissed SOC alert for this vehicle
     final existingRows = await dbService.queryRows('''
@@ -56,7 +64,7 @@ class AlertEngine {
     ''');
 
     if (soc >= 20.0) {
-      // Condition cleared: resolve existing alert if any
+      // Condition cleared: resolve existing alert if any (resolves independently of dismissal)
       if (existingRows.isNotEmpty) {
         final alertId = existingRows[0][0].toString();
         await dbService.execute('''
@@ -66,7 +74,9 @@ class AlertEngine {
         ''');
       }
     } else if (soc < 10.0) {
-      // Critical level (< 10%)
+      // Critical level (< 10%) - triggers/escalates on fresh readings only
+      if (!isFresh) return;
+
       if (existingRows.isEmpty) {
         // Trigger new critical alert
         final newId = uuid.v4();
@@ -88,7 +98,9 @@ class AlertEngine {
         }
       }
     } else {
-      // Warning level (10% <= SOC < 20%)
+      // Warning level (10% <= SOC < 20%) - triggers on fresh readings only
+      if (!isFresh) return;
+
       if (existingRows.isEmpty) {
         // Trigger new low battery alert
         final newId = uuid.v4();
@@ -117,6 +129,7 @@ class AlertEngine {
     required double batteryTemp,
     required DateTime timestamp,
     required String nowIso,
+    required bool isFresh,
   }) async {
     final existingRows = await dbService.queryRows('''
       SELECT id, status 
@@ -128,6 +141,9 @@ class AlertEngine {
     ''');
 
     if (batteryTemp > 45.0) {
+      // Overheating threshold (> 45°C) - triggers on fresh readings only
+      if (!isFresh) return;
+
       if (existingRows.isEmpty) {
         final newId = uuid.v4();
         final tsIso = timestamp.toIso8601String();
