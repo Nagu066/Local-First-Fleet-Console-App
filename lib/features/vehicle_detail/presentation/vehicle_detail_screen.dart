@@ -22,6 +22,7 @@ class VehicleDetailScreen extends ConsumerStatefulWidget {
 
 class _VehicleDetailScreenState extends ConsumerState<VehicleDetailScreen> {
   List<FlSpot> _socHistorySpots = [];
+  List<String> _socTimeLabels = [];
   bool _isLoadingHistory = true;
 
   @override
@@ -33,22 +34,60 @@ class _VehicleDetailScreenState extends ConsumerState<VehicleDetailScreen> {
   Future<void> _loadSocHistory() async {
     final dbService = ref.read(duckDBServiceProvider);
     try {
-      final rows = await dbService.queryRows('''
-        SELECT timestamp, value 
-        FROM telemetry_signals 
-        WHERE vehicle_id = '${widget.vehicleId}' AND signal_name = 'soc' 
-        ORDER BY timestamp ASC;
+      final countRes = await dbService.queryRows('''
+        SELECT COUNT(*) FROM telemetry_signals 
+        WHERE vehicle_id = '${widget.vehicleId}' AND signal_name = 'soc';
       ''');
+      final totalCount = (countRes.isNotEmpty && countRes.first.isNotEmpty)
+          ? (countRes.first[0] as num).toInt()
+          : 0;
+
+      List<List<dynamic>> rows;
+      if (totalCount <= 60) {
+        rows = await dbService.queryRows('''
+          SELECT timestamp, value 
+          FROM telemetry_signals 
+          WHERE vehicle_id = '${widget.vehicleId}' AND signal_name = 'soc' 
+          ORDER BY timestamp ASC;
+        ''');
+      } else {
+        // Analytical downsampling: pick ~60 evenly spaced points across the retained window
+        final step = (totalCount / 60.0).ceil();
+        rows = await dbService.queryRows('''
+          WITH numbered AS (
+            SELECT 
+              timestamp, 
+              value,
+              ROW_NUMBER() OVER (ORDER BY timestamp ASC) AS rn
+            FROM telemetry_signals
+            WHERE vehicle_id = '${widget.vehicleId}' AND signal_name = 'soc'
+          )
+          SELECT timestamp, value
+          FROM numbered
+          WHERE (rn % $step = 0) OR rn = $totalCount
+          ORDER BY timestamp ASC;
+        ''');
+      }
 
       final spots = <FlSpot>[];
+      final labels = <String>[];
       for (int i = 0; i < rows.length; i++) {
-        final val = (rows[i][1] as num).toDouble();
+        final tsRaw = rows[i][0].toString();
+        final val = (rows[i][1] as num).toDouble().clamp(0.0, 100.0);
         spots.add(FlSpot(i.toDouble(), val));
+
+        try {
+          final dt = DateTime.parse(tsRaw).toLocal();
+          labels.add('${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}');
+        } catch (_) {
+          labels.add('');
+        }
       }
 
       if (mounted) {
         setState(() {
           _socHistorySpots = spots;
+          _socTimeLabels = labels;
           _isLoadingHistory = false;
         });
       }
@@ -365,8 +404,8 @@ class _VehicleDetailScreenState extends ConsumerState<VehicleDetailScreen> {
                 ),
                 const SizedBox(height: 12.0),
                 Container(
-                  height: 200.0,
-                  padding: const EdgeInsets.all(16.0),
+                  height: 220.0,
+                  padding: const EdgeInsets.only(top: 16.0, right: 16.0, bottom: 8.0, left: 4.0),
                   decoration: BoxDecoration(
                     color: const Color(0xFF1E293B),
                     borderRadius: BorderRadius.circular(16.0),
@@ -378,14 +417,68 @@ class _VehicleDetailScreenState extends ConsumerState<VehicleDetailScreen> {
                           ? const Center(child: Text('No SOC history records in DuckDB', style: TextStyle(color: Color(0xFF94A3B8))))
                           : LineChart(
                               LineChartData(
+                                lineTouchData: LineTouchData(
+                                  enabled: true,
+                                  touchTooltipData: LineTouchTooltipData(
+                                    getTooltipColor: (_) => const Color(0xFF0F172A),
+                                    getTooltipItems: (touchedSpots) {
+                                      return touchedSpots.map((spot) {
+                                        final idx = spot.x.toInt();
+                                        final timeLabel = (idx >= 0 && idx < _socTimeLabels.length)
+                                            ? _socTimeLabels[idx]
+                                            : '';
+                                        return LineTooltipItem(
+                                          '${spot.y.toStringAsFixed(1)}% SOC\n$timeLabel',
+                                          const TextStyle(
+                                            color: Color(0xFF38BDF8),
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 12,
+                                          ),
+                                        );
+                                      }).toList();
+                                    },
+                                  ),
+                                ),
                                 gridData: FlGridData(
                                   show: true,
                                   drawVerticalLine: false,
                                   getDrawingHorizontalLine: (_) => const FlLine(color: Color(0xFF334155), strokeWidth: 1),
                                 ),
-                                titlesData: const FlTitlesData(
-                                  rightTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                                  topTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                                titlesData: FlTitlesData(
+                                  rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                                  topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                                  leftTitles: AxisTitles(
+                                    sideTitles: SideTitles(
+                                      showTitles: true,
+                                      reservedSize: 38,
+                                      interval: 25,
+                                      getTitlesWidget: (val, meta) => Text(
+                                        '${val.toInt()}%',
+                                        style: const TextStyle(color: Color(0xFF64748B), fontSize: 10),
+                                      ),
+                                    ),
+                                  ),
+                                  bottomTitles: AxisTitles(
+                                    sideTitles: SideTitles(
+                                      showTitles: true,
+                                      reservedSize: 24,
+                                      interval: (_socHistorySpots.length / 4).clamp(1.0, 50.0),
+                                      getTitlesWidget: (val, meta) {
+                                        final idx = val.toInt();
+                                        final divider = (_socHistorySpots.length / 4).ceil().clamp(1, 50);
+                                        if (idx >= 0 && idx < _socTimeLabels.length && (idx % divider == 0)) {
+                                          return Padding(
+                                            padding: const EdgeInsets.only(top: 6.0),
+                                            child: Text(
+                                              _socTimeLabels[idx],
+                                              style: const TextStyle(color: Color(0xFF64748B), fontSize: 10),
+                                            ),
+                                          );
+                                        }
+                                        return const SizedBox.shrink();
+                                      },
+                                    ),
+                                  ),
                                 ),
                                 borderData: FlBorderData(show: false),
                                 minY: 0,
@@ -394,12 +487,20 @@ class _VehicleDetailScreenState extends ConsumerState<VehicleDetailScreen> {
                                   LineChartBarData(
                                     spots: _socHistorySpots,
                                     isCurved: true,
+                                    curveSmoothness: 0.2,
                                     color: const Color(0xFF38BDF8),
-                                    barWidth: 3,
-                                    dotData: const FlDotData(show: true),
+                                    barWidth: 2.5,
+                                    dotData: const FlDotData(show: false),
                                     belowBarData: BarAreaData(
                                       show: true,
-                                      color: const Color(0xFF38BDF8).withOpacity(0.15),
+                                      gradient: LinearGradient(
+                                        begin: Alignment.topCenter,
+                                        end: Alignment.bottomCenter,
+                                        colors: [
+                                          const Color(0xFF38BDF8).withValues(alpha: 0.25),
+                                          const Color(0xFF38BDF8).withValues(alpha: 0.0),
+                                        ],
+                                      ),
                                     ),
                                   ),
                                 ],

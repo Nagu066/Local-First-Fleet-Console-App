@@ -86,10 +86,10 @@ class ScaleGenerator {
           final vId = 'veh_$vehicleNum';
 
           final sigName = signalNames[globalIndex % signalNames.length];
-          final val = _generateSignalValue(sigName, random);
-
           // Spread timestamps over 30 days
           final minutesAgo = (globalIndex / 50).floor();
+          final val = _generateSignalValue(sigName, random, minutesAgo: minutesAgo, vehicleNum: vehicleNum);
+
           final ts = now.subtract(Duration(minutes: minutesAgo));
           final tsIso = ts.toIso8601String();
           final sigId = 's_${runEpoch}_$globalIndex';
@@ -168,24 +168,61 @@ class ScaleGenerator {
     return initialCount - finalCount;
   }
 
-  double _generateSignalValue(String signalName, Random rand) {
+  double _generateSignalValue(
+    String signalName,
+    Random rand, {
+    int minutesAgo = 0,
+    int vehicleNum = 1,
+  }) {
+    // Deterministic phase offset per vehicle so fleet vehicles don't all charge at the exact same minute
+    final vehicleOffset = (vehicleNum * 47) % 360;
+    final cycleMinute = (minutesAgo + vehicleOffset) % 360;
+    final isDischarging = cycleMinute < 240; // 4 hours driving/discharging, 2 hours charging
+
     switch (signalName) {
       case 'soc':
-        return 15.0 + rand.nextDouble() * 80.0;
+        double soc;
+        if (isDischarging) {
+          // Discharging smoothly from 95% down to 20%
+          soc = 95.0 - (cycleMinute / 240.0) * 75.0;
+        } else {
+          // Charging steadily from 20% back to 95%
+          soc = 20.0 + ((cycleMinute - 240) / 120.0) * 75.0;
+        }
+        // Micro-fluctuation sensor noise (+/- 0.4%)
+        soc += (rand.nextDouble() - 0.5) * 0.8;
+        return double.parse(soc.clamp(5.0, 100.0).toStringAsFixed(1));
+
       case 'range':
-        return 30.0 + rand.nextDouble() * 200.0;
+        final baseSoc = isDischarging
+            ? (95.0 - (cycleMinute / 240.0) * 75.0)
+            : (20.0 + ((cycleMinute - 240) / 120.0) * 75.0);
+        return double.parse((baseSoc * 2.2).clamp(10.0, 240.0).toStringAsFixed(1));
+
       case 'speed':
-        return rand.nextBool() ? 0.0 : (20.0 + rand.nextDouble() * 60.0);
+        if (!isDischarging) return 0.0;
+        return (rand.nextDouble() > 0.25)
+            ? double.parse((20.0 + rand.nextDouble() * 45.0).toStringAsFixed(1))
+            : 0.0;
+
       case 'battery_temp':
-        return 25.0 + rand.nextDouble() * 22.0;
+        final baseTemp = isDischarging ? 32.0 : 38.5;
+        return double.parse((baseTemp + (rand.nextDouble() - 0.5) * 4.0).toStringAsFixed(1));
+
       case 'odometer':
-        return 5000.0 + rand.nextDouble() * 50000.0;
+        final odoBase = 15000.0 + (vehicleNum * 400.0);
+        final milesDriven = (43200 - minutesAgo) * 0.4;
+        return double.parse((odoBase + max(0.0, milesDriven)).toStringAsFixed(1));
+
       case 'ignition':
-        return rand.nextBool() ? 1.0 : 0.0;
+        return isDischarging ? 1.0 : 0.0;
+
       case 'latitude':
-        return 12.9716 + (rand.nextDouble() - 0.5) * 0.1;
+        return double.parse((12.9716 + (rand.nextDouble() - 0.5) * 0.05).toStringAsFixed(6));
+
       case 'longitude':
-        return 77.5946 + (rand.nextDouble() - 0.5) * 0.1;
+        return double.parse((77.5946 + (rand.nextDouble() - 0.5) * 0.05).toStringAsFixed(6));
+
       default:
         return 10.0;
     }
