@@ -40,6 +40,21 @@ void main() {
   group('Geofence & Automatic Trip Engine Tests', () {
     final now = DateTime.now();
 
+    test('fetchAllGeofences returns 3 seeded geofences with live vehicle counts', () async {
+      // Place v200 inside Depot Alpha
+      await geofenceEngine.processLocation(
+        vehicleId: 'v200',
+        lat: 12.9716,
+        lng: 77.5946,
+        timestamp: now,
+      );
+
+      final geofences = await geofenceEngine.fetchAllGeofences();
+      expect(geofences.length, greaterThanOrEqualTo(3));
+      final depotAlpha = geofences.firstWhere((g) => g.name == 'Depot Alpha');
+      expect(depotAlpha.activeVehicleCount, equals(1));
+    });
+
     test('Exit from Depot Alpha starts an IN_PROGRESS trip', () async {
       // 1. Vehicle starts inside Depot Alpha (12.9716, 77.5946)
       await geofenceEngine.processLocation(

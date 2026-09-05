@@ -131,12 +131,76 @@ class FleetRepository {
 
   /// Seeds initial 50 vehicles and baseline telemetry packets if database is empty
   Future<void> seedInitialDataIfEmpty() async {
+    // 1. Always ensure default circular geofences are seeded
+    await geofenceEngine.seedDefaultGeofences();
+
     final countRows = await dbService.queryRows('SELECT COUNT(*) FROM vehicles;');
     final count = (countRows.first.first as num).toInt();
 
     if (count == 0) {
-      await geofenceEngine.seedDefaultGeofences();
       await seedVehicles(count: 50);
+    }
+
+    // 2. Ensure vehicles are assigned to geofences if no events exist
+    final eventCountRows = await dbService.queryRows('SELECT COUNT(*) FROM geofence_events;');
+    final eventCount = eventCountRows.isNotEmpty ? (eventCountRows.first.first as num).toInt() : 0;
+    if (eventCount == 0) {
+      await assignVehiclesToGeofences();
+    }
+  }
+
+  /// Assigns vehicles to Depot Alpha, Charging Hub East, Logistics Terminal South, and in-transit
+  Future<void> assignVehiclesToGeofences() async {
+    final vehicleRows = await dbService.queryRows('SELECT id FROM vehicles ORDER BY id ASC;');
+    if (vehicleRows.isEmpty) return;
+
+    final now = DateTime.now();
+    final nowIso = now.toIso8601String();
+    final random = Random(42);
+
+    int index = 1;
+    for (final row in vehicleRows) {
+      final vehicleId = row[0].toString();
+      double lat;
+      double lng;
+
+      if (index <= 12) {
+        // Depot Alpha (12.9716, 77.5946, radius 500m)
+        lat = 12.9716 + (random.nextDouble() - 0.5) * 0.002;
+        lng = 77.5946 + (random.nextDouble() - 0.5) * 0.002;
+      } else if (index <= 22) {
+        // Charging Hub East (12.9250, 77.6800, radius 400m)
+        lat = 12.9250 + (random.nextDouble() - 0.5) * 0.002;
+        lng = 77.6800 + (random.nextDouble() - 0.5) * 0.002;
+      } else if (index <= 32) {
+        // Logistics Terminal South (12.8500, 77.6500, radius 600m)
+        lat = 12.8500 + (random.nextDouble() - 0.5) * 0.002;
+        lng = 77.6500 + (random.nextDouble() - 0.5) * 0.002;
+      } else {
+        // In transit on highway
+        lat = 12.9500 + (random.nextDouble() - 0.5) * 0.08;
+        lng = 77.6200 + (random.nextDouble() - 0.5) * 0.08;
+      }
+
+      // Insert updated coordinates into telemetry_signals
+      final latId = uuid.v4();
+      final lngId = uuid.v4();
+      await dbService.execute('''
+        INSERT INTO telemetry_signals (id, vehicle_id, signal_name, value, unit, timestamp, ingested_at)
+        VALUES 
+          ('$latId', '$vehicleId', 'latitude', $lat, NULL, '$nowIso', '$nowIso'),
+          ('$lngId', '$vehicleId', 'longitude', $lng, NULL, '$nowIso', '$nowIso');
+      ''');
+
+      // Process location in geofence engine to register ENTRY/EXIT transitions
+      await geofenceEngine.processLocation(
+        vehicleId: vehicleId,
+        lat: lat,
+        lng: lng,
+        timestamp: now,
+      );
+
+      index++;
     }
   }
 

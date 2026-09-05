@@ -48,16 +48,29 @@ class _FleetHomeScreenState extends ConsumerState<FleetHomeScreen> {
           ],
         ),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.map_outlined, color: Color(0xFF38BDF8)),
-            tooltip: 'Geofences',
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const GeofenceManagementScreen()),
-              );
-            },
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 10.0),
+            child: TextButton.icon(
+              style: TextButton.styleFrom(
+                foregroundColor: const Color(0xFF38BDF8),
+                backgroundColor: const Color(0xFF0F172A),
+                padding: const EdgeInsets.symmetric(horizontal: 10.0),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8.0),
+                  side: const BorderSide(color: Color(0xFF334155)),
+                ),
+              ),
+              icon: const Icon(Icons.fmd_good, size: 16.0, color: Color(0xFF38BDF8)),
+              label: const Text('Geofences', style: TextStyle(fontSize: 12.0, fontWeight: FontWeight.bold)),
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const GeofenceManagementScreen()),
+                );
+              },
+            ),
           ),
+          const SizedBox(width: 4.0),
           IconButton(
             icon: const Icon(Icons.speed, color: Color(0xFFF59E0B)),
             tooltip: 'Scale Benchmark',
@@ -73,8 +86,11 @@ class _FleetHomeScreenState extends ConsumerState<FleetHomeScreen> {
       ),
       body: RefreshIndicator(
         onRefresh: () async {
+          final repo = ref.read(fleetRepositoryProvider);
+          await repo.seedInitialDataIfEmpty();
           ref.invalidate(vehicleListProvider);
           ref.invalidate(fleetStatusCountsProvider);
+          ref.invalidate(geofencesProvider);
         },
         child: Column(
           children: [

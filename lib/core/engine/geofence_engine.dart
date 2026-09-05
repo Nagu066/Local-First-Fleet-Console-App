@@ -332,11 +332,21 @@ class GeofenceEngine {
 
   /// Queries all geofences (both active and retained deactivated) with live active vehicle counts.
   Future<List<Geofence>> fetchAllGeofences() async {
-    final gfRows = await dbService.queryRows('''
+    var gfRows = await dbService.queryRows('''
       SELECT id, name, center_lat, center_lng, radius_meters, is_active, created_at, updated_at 
       FROM geofences 
       ORDER BY created_at ASC;
     ''');
+
+    // Auto-seed if geofences table is empty
+    if (gfRows.isEmpty) {
+      await seedDefaultGeofences();
+      gfRows = await dbService.queryRows('''
+        SELECT id, name, center_lat, center_lng, radius_meters, is_active, created_at, updated_at 
+        FROM geofences 
+        ORDER BY created_at ASC;
+      ''');
+    }
 
     final geofences = <Geofence>[];
     for (final r in gfRows) {
@@ -354,6 +364,34 @@ class GeofenceEngine {
 
       final count = countRows.isNotEmpty ? (countRows.first.first as num).toInt() : 0;
       geofences.add(Geofence.fromRow(r, activeVehicleCount: count));
+    }
+
+    // If all geofence counts are 0, check if vehicles exist and need location re-evaluation
+    final totalInside = geofences.fold<int>(0, (sum, g) => sum + g.activeVehicleCount);
+    if (totalInside == 0 && geofences.isNotEmpty) {
+      final vehicleCountRows = await dbService.queryRows('SELECT COUNT(*) FROM vehicles;');
+      final vCount = vehicleCountRows.isNotEmpty ? (vehicleCountRows.first.first as num).toInt() : 0;
+      if (vCount > 0) {
+        await reEvaluateAllVehicles();
+        // Re-read counts after evaluation
+        geofences.clear();
+        for (final r in gfRows) {
+          final gfId = r[0].toString();
+          final countRows = await dbService.queryRows('''
+            WITH latest_events AS (
+              SELECT vehicle_id, geofence_id, event_type,
+                     ROW_NUMBER() OVER (PARTITION BY vehicle_id ORDER BY timestamp DESC, id DESC) as rn
+              FROM geofence_events
+            )
+            SELECT COUNT(*) 
+            FROM latest_events 
+            WHERE geofence_id = '$gfId' AND event_type = 'ENTRY' AND rn = 1;
+          ''');
+
+          final count = countRows.isNotEmpty ? (countRows.first.first as num).toInt() : 0;
+          geofences.add(Geofence.fromRow(r, activeVehicleCount: count));
+        }
+      }
     }
 
     return geofences;

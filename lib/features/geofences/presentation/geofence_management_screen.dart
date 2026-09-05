@@ -156,7 +156,19 @@ class _GeofenceManagementScreenState extends ConsumerState<GeofenceManagementScr
         title: const Text('Persisted Circular Geofences'),
         actions: [
           IconButton(
+            icon: const Icon(Icons.refresh, color: Color(0xFF38BDF8)),
+            tooltip: 'Reseed & Refresh Counts',
+            onPressed: () async {
+              final repo = ref.read(fleetRepositoryProvider);
+              await repo.seedInitialDataIfEmpty();
+              await repo.assignVehiclesToGeofences();
+              ref.invalidate(geofencesProvider);
+              ref.invalidate(vehicleListProvider);
+            },
+          ),
+          IconButton(
             icon: const Icon(Icons.add_location_alt, color: Color(0xFF38BDF8)),
+            tooltip: 'Create Geofence',
             onPressed: () => _showAddEditGeofenceModal(),
           ),
         ],
@@ -164,8 +176,31 @@ class _GeofenceManagementScreenState extends ConsumerState<GeofenceManagementScr
       body: geofencesAsync.when(
         data: (geofences) {
           if (geofences.isEmpty) {
-            return const Center(
-              child: Text('No geofences seeded.', style: TextStyle(color: Color(0xFF94A3B8))),
+            return Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.fmd_bad_outlined, size: 48, color: Color(0xFF64748B)),
+                  const SizedBox(height: 12.0),
+                  const Text('No geofences found.', style: TextStyle(color: Color(0xFF94A3B8), fontSize: 16)),
+                  const SizedBox(height: 16.0),
+                  ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF38BDF8),
+                      foregroundColor: const Color(0xFF0F172A),
+                    ),
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Seed 3 Default Geofences & Sync'),
+                    onPressed: () async {
+                      final repo = ref.read(fleetRepositoryProvider);
+                      await repo.seedInitialDataIfEmpty();
+                      await repo.assignVehiclesToGeofences();
+                      ref.invalidate(geofencesProvider);
+                      ref.invalidate(vehicleListProvider);
+                    },
+                  ),
+                ],
+              ),
             );
           }
 
