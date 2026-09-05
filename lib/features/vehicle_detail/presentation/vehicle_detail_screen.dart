@@ -565,41 +565,43 @@ class _VehicleDetailScreenState extends ConsumerState<VehicleDetailScreen> {
                             border: Border.all(color: const Color(0xFF334155)),
                           ),
                           child: Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              Row(
-                                children: [
-                                  Container(
-                                    padding: const EdgeInsets.all(8.0),
-                                    decoration: BoxDecoration(
-                                      color: (t.status == TripStatus.completed ? const Color(0xFF10B981) : const Color(0xFFF59E0B)).withValues(alpha: 0.15),
-                                      shape: BoxShape.circle,
-                                    ),
-                                    child: Icon(
-                                      t.status == TripStatus.completed ? Icons.check_circle_rounded : Icons.directions_run_rounded,
-                                      size: 20.0,
-                                      color: t.status == TripStatus.completed ? const Color(0xFF10B981) : const Color(0xFFF59E0B),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 12.0),
-                                  Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        '${t.originGeofenceName} ➔ ${t.destinationGeofenceName}',
-                                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13.0),
-                                      ),
-                                      const SizedBox(height: 3.0),
-                                      Text(
-                                        t.status == TripStatus.completed
-                                            ? '${DateFormat('MMM dd, HH:mm').format(t.startTime)} • ${t.distanceKm.toStringAsFixed(1)} km'
-                                            : '${DateFormat('MMM dd, HH:mm').format(t.startTime)} • In Transit',
-                                        style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 12.0),
-                                      ),
-                                    ],
-                                  ),
-                                ],
+                              Container(
+                                padding: const EdgeInsets.all(8.0),
+                                decoration: BoxDecoration(
+                                  color: (t.status == TripStatus.completed ? const Color(0xFF10B981) : const Color(0xFFF59E0B)).withValues(alpha: 0.15),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Icon(
+                                  t.status == TripStatus.completed ? Icons.check_circle_rounded : Icons.directions_run_rounded,
+                                  size: 18.0,
+                                  color: t.status == TripStatus.completed ? const Color(0xFF10B981) : const Color(0xFFF59E0B),
+                                ),
                               ),
+                              const SizedBox(width: 12.0),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      '${t.originGeofenceName} ➔ ${t.destinationGeofenceName}',
+                                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13.0),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                    const SizedBox(height: 3.0),
+                                    Text(
+                                      t.status == TripStatus.completed
+                                          ? '${DateFormat('MMM dd, HH:mm').format(t.startTime)} • ${t.distanceKm.toStringAsFixed(1)} km'
+                                          : '${DateFormat('MMM dd, HH:mm').format(t.startTime)} • In Transit',
+                                      style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 12.0),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 8.0),
                               Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
                                 decoration: BoxDecoration(
@@ -607,11 +609,11 @@ class _VehicleDetailScreenState extends ConsumerState<VehicleDetailScreen> {
                                   borderRadius: BorderRadius.circular(6.0),
                                 ),
                                 child: Text(
-                                  t.status.label,
+                                  t.status == TripStatus.completed ? 'COMPLETED' : 'IN PROGRESS',
                                   style: TextStyle(
                                     color: t.status == TripStatus.completed ? const Color(0xFF10B981) : const Color(0xFFF59E0B),
                                     fontWeight: FontWeight.bold,
-                                    fontSize: 11.0,
+                                    fontSize: 10.0,
                                   ),
                                 ),
                               ),
